@@ -1,6 +1,11 @@
 from stable_baselines3 import PPO, A2C, DDPG, SAC, TD3
 from policyGradientLoss import PolicyGradientLossCallback
 import numpy as np
+import os
+from pathlib import Path
+
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 # Define PPO Agent
 class PPOAgent:
@@ -9,6 +14,7 @@ class PPOAgent:
         self.model = PPO("MlpPolicy", env, verbose=1)
         self.callback = PolicyGradientLossCallback()
         self.model.learn(total_timesteps=total_timesteps, callback=self.callback)
+        self.model.save(MODELS_DIR / "ppo_model")
         self.threshold = threshold
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -52,6 +58,7 @@ class A2CAgent(PPOAgent):
         self.model = A2C("MlpPolicy", env, verbose=1)
         self.callback = PolicyGradientLossCallback()
         self.model.learn(total_timesteps=total_timesteps, callback=self.callback)
+        self.model.save(MODELS_DIR / "a2c_model")
 
 # -----------------------------------------------------------------------------
 
@@ -62,6 +69,7 @@ class DDPGAgent(PPOAgent):
         self.model = DDPG("MlpPolicy", env, verbose=1)
         self.callback = PolicyGradientLossCallback()
         self.model.learn(total_timesteps=total_timesteps, callback=self.callback)
+        self.model.save(MODELS_DIR / "ddpg_model")
 
 # -----------------------------------------------------------------------------
 
@@ -72,6 +80,7 @@ class SACAgent(PPOAgent):
         self.model = SAC("MlpPolicy", env, verbose=1)
         self.callback = PolicyGradientLossCallback()
         self.model.learn(total_timesteps=total_timesteps, callback=self.callback)
+        self.model.save(MODELS_DIR / "sac_model")
 
 # -----------------------------------------------------------------------------
 
@@ -82,6 +91,7 @@ class TD3Agent(PPOAgent):
         self.model = TD3("MlpPolicy", env, verbose=1)
         self.callback = PolicyGradientLossCallback()
         self.model.learn(total_timesteps=total_timesteps, callback=self.callback)
+        self.model.save(MODELS_DIR / "td3_model")
 
 # -----------------------------------------------------------------------------
 
