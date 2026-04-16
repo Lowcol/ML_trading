@@ -1,135 +1,79 @@
-import os
-import time
-from dotenv import load_dotenv
-import requests
-import pandas as pd
+
 import numpy as np
+import pandas as pd
+import yfinance as yf
+import os
+import gymnasium as gym
+from gymnasium import spaces
+import matplotlib.pyplot as plt
+from stable_baselines3 import PPO, A2C, DDPG, SAC, TD3
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.callbacks import BaseCallback
 
-# Load environment variables
-load_dotenv()
+# List of stocks in the Dow Jones 30
+tickers = [
+    'MMM', 'AXP', 'AAPL', 'BA', 'CAT', 'CVX', 'CSCO', 'KO', 'DIS', 'DOW',
+    'GS', 'HD', 'IBM', 'INTC', 'JNJ', 'JPM', 'MCD', 'MRK', 'MSFT', 'NKE',
+    'PFE', 'PG', 'TRV', 'UNH', 'UTX', 'VZ', 'V', 'AMZN', 'WMT', 'XOM', 'NVDA', 
+    'SHW'
+]
+tickers.remove('DOW')
+tickers.remove('UTX')
 
-API_TOKEN = os.getenv("TIINGO_API_TOKEN", "")
-START_DATE = "2020-01-01"
-DATA_DIR = "data/raw"
+# Get historical data from Yahoo Finance and save it to dictionary
+def fetch_stock_data(tickers, start_date, end_date):
+    stock_data = {}
+    for ticker in tickers:
+        stock_data[ticker] = yf.download(ticker, start=start_date, end=end_date)
+    return stock_data
 
-# Ensure data directory exists
-os.makedirs(DATA_DIR, exist_ok=True)
+# Call the function to get data
+stock_data = fetch_stock_data(tickers, '2009-01-01', '2020-05-08')
 
-class TiingoTraderData:
-    def __init__(self, token):
-        self.token = token
-        self.headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Token {token}'
-        }
+# split the data into training, validation and test sets
+training_data_time_range = ('2009-01-01', '2015-12-31')
+validation_data_time_range = ('2016-01-01', '2016-12-31')
+test_data_time_range = ('2017-01-01', '2020-05-08')
 
-    def get_historical_eod(self, ticker, start_date, retries=3):
-        url = f"https://api.tiingo.com/tiingo/daily/{ticker}/prices"
-        params = {'startDate': start_date, 'format': 'json'}
-        for attempt in range(retries):
-            try:
-                response = requests.get(url, params=params, headers=self.headers)
-                if response.status_code == 200:
-                    df = pd.DataFrame(response.json())
-                    cols = ['date', 'adjOpen', 'adjHigh', 'adjLow', 'adjClose', 'adjVolume']
-                    return df[cols]
-                elif response.status_code == 429:
-                    print(f"  [!] Rate limit (429) hit for {ticker}. Sleeping for 60 seconds... (Attempt {attempt+1}/{retries})")
-                    time.sleep(60)
-                else:
-                    print(f"Error fetching {ticker}: {response.status_code}")
-                    break
-            except Exception as e:
-                print(f"Exception for {ticker}: {e}")
-                time.sleep(5)
-        return pd.DataFrame()
+# split the data into training, validation and test sets
+training_data = {}
+validation_data = {}
+test_data = {}
 
-    def get_intraday_trigger(self, ticker, start_date, freq='1min'):
-        url = f"https://api.tiingo.com/iex/{ticker}/prices"
-        params = {
-            'startDate': start_date,
-            'resampleFreq': freq,
-            'columns': 'open,high,low,close,volume'
-        }
-        try:
-            response = requests.get(url, params=params, headers=self.headers)
-            if response.status_code == 200:
-                return pd.DataFrame(response.json())
-        except Exception as e:
-            print(f"Exception for {ticker} intraday: {e}")
-        return pd.DataFrame()
+for ticker, df in stock_data.items():
+    training_data[ticker] = df.loc[training_data_time_range[0]:training_data_time_range[1]]
+    validation_data[ticker] = df.loc[validation_data_time_range[0]:validation_data_time_range[1]]
+    test_data[ticker] = df.loc[test_data_time_range[0]:test_data_time_range[1]]
 
-# --- Ticker Selection ---
-TICKER_LIST = {
-    # 1. THE AI & SEMI REVOLUTION (2023-2024 Alpha)
-    # "AI_SEMI": [
-    #     "NVDA", "AMD", "SMCI", "AVGO", "TSM", "ARM", "VRT", "ANET", "MU", "MRVL", 
-    #     "ASML", "LRCX", "KLAC", "SNPS", "CDNS", "VRT", "DELL", "HPE"
-    # ],
-    # # 2. SOFTWARE, SAAS & CYBERSECURITY (High Momentum)
-    "SAAS_CYBER": [
-        # "PLTR", "SNOW", "SHOP", "MDB", "TEAM", "DDOG", "NET", "CRWD", "OKTA", 
-        # "ZS", "PANW", "HUBS", "PCOR", "DOCN", "CFLT", "GTLB", "PATH", "AI", 
-        "MSFT"
-    ],
-    # 3. THE "VOLATILITY FACTORY" (Biotech & MedTech)
-    # These provide the most "Label 1" and "Label 0" examples for the model
-    "BIOTECH_MED": [
-        "LLY", "NVO", "VRTX", "REGN", "ISRG", "MRNA", "BNTX", "CRSP", "BEAM", 
-        "NTLA", "EDIT", "SAVA", "KOD", "BMEA", "IMTX", "AXSM", "VKTX", "ALT"
-    ],
-    # 4. FINTECH, CRYPTO & GAMING (Sentiment Driven)
-    "FINTECH_CRYPTO": [
-        "COIN", "SQ", "PYPL", "MARA", "RIOT", "CLSK", "AFRM", "SOFI", "NU", 
-        "HOOD", "UPST", "MQ", "DKNG", "PENN", "RBLX"
-    ],
-    # 5. E-COMMERCE & GLOBAL GROWTH (High Beta)
-    "GLOBAL_GROWTH": [
-        "MELI", "SE", "AMZN", "BABA", "PDD", "DASH", "ABNB", "BKNG", "CHWY", 
-        "CPNG", "ETSY", "JD", "TME", "LI", "NIO", "XPEV"
-    ],
-    # 6. ENERGY, URANIUM & STRATEGIC METALS (The 2022 Cycle)
-    "ENERGY_METALS": [
-        "CCJ", "URA", "UUUU", "NXE", "DNN", "LAC", "ALB", "SQM", "MP", "ENPH", 
-        "SEDG", "RUN", "FSLR", "XME", "FCX", "CLF"
-    ],
-    # 7. INDUSTRIAL MOMENTUM & INFRASTRUCTURE
-    "INDUSTRIALS": [
-        "CAT", "DE", "URI", "PWR", "EME", "FIX", "ETN", "PH", "GWW", "AXON", "TDG"
-    ],
-    # 8. THE "WILD CARDS" (EVs, Space, and High Beta Runners)
-    "HIGH_BETA": [
-        "TSLA", "RIVN", "LCID", "SPCE", "U", "TWLO", "SNAP", "RCL", "CCL", "NCLH", 
-        "DUOL", "SMCT", "IONQ", "PLUG", "HOOD"
-    ],
-    # 9. MARKET REGIME (Keep these for context)
-    "REGIME": ["SPY", "QQQ", "IWM", "ARKK", "BITO", "GLD"]
-}
+# Save split data into train/validate/test folders
+base_dir = os.path.dirname(os.path.abspath(__file__))
+train_dir = os.path.join(base_dir, 'train')
+validate_dir = os.path.join(base_dir, 'validate')
+test_dir = os.path.join(base_dir, 'test')
 
-if __name__ == "__main__":
-    if not API_TOKEN:
-        raise ValueError("Missing TIINGO_API_TOKEN environment variable.")
+os.makedirs(train_dir, exist_ok=True)
+os.makedirs(validate_dir, exist_ok=True)
+os.makedirs(test_dir, exist_ok=True)
 
-    pipeline = TiingoTraderData(API_TOKEN)
-    
-    # Flatten the ticker list for the loop
-    all_tickers = [t for sublist in TICKER_LIST.values() for t in sublist]
-    
-    print(f"🚀 Starting database build for {len(all_tickers)} tickers...")
+for ticker in tickers:
+    training_data[ticker].to_csv(os.path.join(train_dir, f'{ticker}.csv'))
+    validation_data[ticker].to_csv(os.path.join(validate_dir, f'{ticker}.csv'))
+    test_data[ticker].to_csv(os.path.join(test_dir, f'{ticker}.csv'))
 
-    for ticker in all_tickers:
-        print(f"\n--- Processing {ticker} ---")
-        
-        # 1. Fetch EOD Data
-        eod_data = pipeline.get_historical_eod(ticker, START_DATE)
-        if not eod_data.empty:
-            eod_path = os.path.join(DATA_DIR, f"{ticker.lower()}_eod.csv")
-            eod_data.to_csv(eod_path, index=False)
-            print(f"✓ Saved EOD: {eod_path}")
-        
+# print shape of training, validation and test data
+ticker = 'AAPL'
+print(f'- Training data shape for {ticker}: {training_data[ticker].shape}')
+print(f'- Validation data shape for {ticker}: {validation_data[ticker].shape}')
+print(f'- Test data shape for {ticker}: {test_data[ticker].shape}\n')
 
-        # 2. Rate Limiting: Tiingo limits free users to e.g. 50 requests/min and 500/hour.
-        # We increase the sleep to keep it safely below the ~50 request per minute limit.
-        time.sleep(1.5) 
 
-    print("\n✅ Database build complete. Ready for preprocessing.")
+# Plot:
+plt.figure(figsize=(12, 4))
+plt.plot(training_data[ticker].index, training_data[ticker]['Open'], label='Training', color='blue')
+plt.plot(validation_data[ticker].index, validation_data[ticker]['Open'], label='Validation', color='red')
+plt.plot(test_data[ticker].index, test_data[ticker]['Open'], label='Test', color='green')
+plt.xlabel('Date')
+plt.ylabel('Value')
+plt.title(f'{ticker} Stock, Open Price')
+plt.legend()
+plt.show()

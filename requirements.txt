@@ -1,2 +1,6 @@
 python-dotenv
 pyarrow
+stable-baselines3
+gymnasium
+yfinance
+pandas
