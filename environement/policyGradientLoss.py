@@ -28,4 +28,5 @@ class PolicyGradientLossCallback(BaseCallback):
         plt.xlabel('Training Steps')
         plt.ylabel('Loss')
         plt.legend()
-        plt.show()
+        plt.savefig(f'{name}_policy_gradient_loss.png')
+        plt.close()
